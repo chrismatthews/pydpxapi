@@ -10,7 +10,7 @@ setup(
     version='0.21',
     py_modules=['pydpxapi/api','pydpxapi/__init__'],
     url='',
-    license='NIT',
+    license='MIT',
     author='Christopher Matthews',
     author_email='matthews@campusnet.de',
 )
