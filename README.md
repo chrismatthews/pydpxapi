@@ -6,9 +6,10 @@ using the method of the Command line interface 'syncui' for accessing different 
 At the moment this is limited to readonly access only of the modules ssdatmgr & sssched
 
 Dependancy:
-Python 2.7
-subprocess, re, os, time, logging < all standard modules
-asciitable < https://github.com/taldcroft/asciitable
+
+    Python 2.7
+    subprocess, re, os, time, logging < all standard modules
+    asciitable < https://github.com/taldcroft/asciitable
                 
 
 Examples:
