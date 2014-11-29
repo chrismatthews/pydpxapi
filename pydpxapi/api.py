@@ -7,21 +7,23 @@ At the moment this is limited to readonly access only of the modules ssdatmgr & 
 """
 
 #-------------------------------------------------------------------------------
-# Name:        api
-# Purpose:     Python API to Syncui commands
+# Name:        DPX-Class
+# Purpose:     DPX Pre & Post Scripts
 # Author:      matthews@campusnet.de
-# Version:     0.21
+# Version:     0.24
 # Created:     23/02/2014
 # Copyright:   Copyright (c) 2014 Christopher Matthews
-# Licence:     MIT License
+# Licence:     MIT
 #-------------------------------------------------------------------------------
 
-__version__ = '0.21'
+__version__ = '0.24'
 __author__ = 'Christopher Matthews'
 
 import subprocess
+import sys
 import re
 import asciitable
+import csv
 import os
 import time
 import logging
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 # create console handler and set level to info
 ch = logging.FileHandler('output.log', mode='w')
-ch.setLevel(logging.DEBUG)
+ch.setLevel(logging.INFO)
 # create formatter
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 # add formatter to ch
@@ -68,9 +70,9 @@ class DPX_syncui_Connection():
                 print "+++" + line
         return (exception_lines)
 
-    def __init__(self, SSPRODIR, DPX_Command):
+    def __init__(self, SSPRODIR, DPX_Command, program='bin/syncui'):
         text = DPX_Command
-        command = SSPRODIR + "/bin/syncui"
+        command = SSPRODIR + "/" + program
         self.run_syncui_command(command, SSPRODIR)
         self.result = self.communicate(text)
         logger.debug('syncui stderr...\n %s', self.result[0])
@@ -110,13 +112,17 @@ class DPX_syncui():
         t = DPX_syncui_Connection(self.ssprodir, dpx_command)
         result = str(t.result[1])
 
+        # Workaround 3 - If node_feature missing add {node_feature={none}}
+        result = re.sub(r'(\d+\s+)(---)', r'\1 {node_feature={none}} \2', result)
+
         # Workaround 1 - Remove the node_feature
-        node_feature = re.findall(r'\{[^)]*\}', result)  # Get contents of curly bracket under features
-        result = re.sub(r'\{[^)]*\}', '', result)  # remove contents of above
+        node_feature = re.findall(r'\{([^}]+)\}\}', result)  # Get contents of curly bracket under features
+        result = re.sub(r'\{([^}]+)\}\}', '', result)  # remove contents of above
         logger.debug('DPX syncui node list remove node feature curly brackets %s', result)
+
         # Workaround 2 - Add missing "server" entry for Node Type VSphere or Virtual Cluster Resources
         # if line has '---(N/A)' then between column 4 and 5 add server = <none>
-        result = re.sub(r'([\w.]*)(\s*[\w]*\s*[\w]*\s*[\d]*\s*---\(N\/A\))', r'\1   <none>   \2', result)
+        result = re.sub(r'(\)\s+\S+\s+\S+\s+\S+\s+\S+)(\s+\S+\s+\S+\s+\d+\s+\-\-\-)', r'\1 <none> \2', result)
         logger.debug('DPX syncui node workaround 2 add column 5 server=<node> %s', result)
 
         c = DPX_extra_cleanup_list_ouput(result, 'space')
@@ -150,6 +156,27 @@ class DPX_syncui():
         c = DPX_extra_cleanup_list_ouput(result, 'space')
         self.cat_list = c.list_dict
         logger.debug('get_syncui_cat_list self.cat_list: %s', self.cat_list)
+
+    def dpx_map_list_dp(self):
+        dpx_command = 'c s ' + self.dpx_master + ' ssdatmgr\ndb login ' + self.dpx_user + ' ' + self.dpx_pass + '\n sep ,\nmap list,2\nquit\n'
+        logger.info('DPX_syncui_map_list_dp')
+        t = DPX_syncui_Connection(self.ssprodir, dpx_command)
+        result = str(t.result[1])
+        logger.debug('det_syncui_map_list_dp stdout\n %s', result)
+        # Clean up the Headers and Data - TODO could be done better!
+        # -----------------------------------------------------------------------------------------
+        result = re.sub('\(', '', result)
+        result = re.sub('\)', ' ', result)
+        result = re.sub('===', '', result)
+        result = re.sub('qtree', 'qtr', result)
+        result = re.sub(r'jobname', r'jobnaBL', result, 1)
+        # result = re.sub(r'retpd jobname', r'retpd jobnaDP', result)
+        result = re.sub('referenced\sjobid', 'refer_jobid', result)
+        # -----------------------------------------------------------------------------------------
+        logger.debug('det_syncui_map_list_dp_cleaned_up\n %s', result)
+        c = DPX_extra_cleanup_list_ouput(result, 'fixed')
+        self.map_list_dp = c.list_dict
+        logger.debug('get_syncui_map_list_dp self.map_list_dp: %s', self.map_list_dp)
 
     def dpx_job_list(self):
         dpx_command = 'c s ' + self.dpx_master + ' ssdatmgr\ndb login ' + self.dpx_user + ' ' + self.dpx_pass + '\njob list\nquit\n'
@@ -185,7 +212,7 @@ class DPX_syncui():
         regexed_line = re.search(regex, result, re.DOTALL)
         # regexed_line.group(0) is the whole result of the regex
 
-        regex = 'DESTINATION:  '
+        regex = 'DESTINATION:\s+'
         all_destinations = re.sub(regex, r'', regexed_line.group(0).rstrip())  # Remove DESTINATION:
         all_destinations = re.split('\n', all_destinations)
         logger.debug('get_syncui_job_getdest all_Destinations %s... %s', jobname, all_destinations)
@@ -277,15 +304,6 @@ class DPX_syncui():
         c = DPX_extra_cleanup_list_ouput(result, 'fixed')
         self.jukebox_list = c.list_dict
         logger.info('DPX_syncui_jukebox_list self.jukebox_list: %s', self.jukebox_list)
-
-    def dpx_pref_list(self):
-        dpx_command = 'c s ' + self.dpx_master + ' ssdatmgr\ndb login ' + self.dpx_user + ' ' + self.dpx_pass + '\npref list\nquit\n'
-        logger.info('DPX_syncui_pref_list')
-        t = DPX_syncui_Connection(self.ssprodir, dpx_command)
-        result = str(t.result[1])
-        c = DPX_extra_cleanup_list_ouput(result, 'fixed')
-        self.pref_list = c.list_dict
-        logger.info('DPX_syncui_pref_list self.pref_list: %s', self.pref_list)
 
     def dpx_resource_list(self):
         dpx_command = 'c s ' + self.dpx_master + ' ssdatmgr\ndb login ' + self.dpx_user + ' ' + self.dpx_pass + '\nresource list\nquit\n'
